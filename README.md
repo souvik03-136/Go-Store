@@ -185,6 +185,11 @@ Contributions are welcome! Please fork the repository and create a pull request 
 
 This project is licensed under the MIT License. See the `LICENSE` file for more details.
 
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for more details.
+
+
 ## Acknowledgments
 
 - Inspired by modern cloud storage systems and best practices in cloud architecture.
