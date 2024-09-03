@@ -57,6 +57,22 @@ cloud-file-storage/
 │   │   ├── routes.go             # API routes definition
 │   │   └── server.go             # Server setup and initialization
 │   │
+│   ├── utils
+│   │   └── base_response.go
+│   │
+│   ├── merrors
+│   │   ├── conflict_409.go
+│   │   ├── constants.go
+│   │   ├── downstream_550.go
+│   │   ├── forbidden_403.go
+│   │   ├── handle_service_errors.go
+│   │   ├── internal_server_500.go
+│   │   ├── not_found_404.go
+│   │   ├── service_unavailable_503.go
+│   │   ├── unauthorized_401.go
+│   │   └── validation_422.go
+│   │
+│   │
 │   ├── services/
 │   │   ├── auth_service.go       # Business logic for authentication
 │   │   ├── file_service.go       # Business logic for file operations
@@ -70,7 +86,7 @@ cloud-file-storage/
 │   ├── migrate.sh                # Script for running database migrations
 │   └── deploy.sh                 # Script for deploying the application
 │
-├── sql/
+├── database/
 │   ├── migrations/
 │   │   ├── 001_create_users_table.up.sql   # SQL migration file for creating users table
 │   │   ├── 002_create_files_table.up.sql   # SQL migration file for creating files table
