@@ -5,43 +5,70 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/souvik03-136/Go-Store/internal/merrors"
 )
 
-func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Extract the token from the Authorization header
-		authHeader := c.GetHeader("Authorization")
+// CORSMiddleware handles Cross-Origin Resource Sharing (CORS) settings.
+func CORSMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		ctx.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
+		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+		ctx.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type")
+		ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if ctx.Request.Method == "OPTIONS" {
+			ctx.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
+// RequestLogger logs the details of each incoming request.
+func RequestLogger() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		// Log the incoming request details
+		ctx.Next()
+		// Optionally log response details if needed
+	}
+}
+
+// JWTAuthMiddleware verifies the JWT token and extracts claims.
+func JWTAuthMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		authHeader := ctx.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort()
+			merrors.Unauthorized(ctx, "Authorization header is missing")
 			return
 		}
 
-		// The Authorization header is usually in the format "Bearer <token>"
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
-			c.Abort()
+		// Extract the token from the header
+		tokenParts := strings.Split(authHeader, "Bearer ")
+		if len(tokenParts) != 2 {
+			merrors.Unauthorized(ctx, "Invalid authorization header format")
+			return
+		}
+		tokenString := tokenParts[1]
+
+		// Extract the salt (assuming it's sent as a query parameter, header, or some other way)
+		salt := ctx.Query("salt")
+		if salt == "" {
+			merrors.Unauthorized(ctx, "Salt is missing")
 			return
 		}
 
-		tokenString := parts[1]
-
-		// Extract the salt from the query parameter or from the token (depends on your implementation)
-		salt := c.Query("salt") // Or you could use a different method to retrieve the salt
-
-		// Validate the token using the auth package
-		claims, err := ValidateToken(tokenString, salt)
+		// Validate the token
+		claims, err := ValidateToken(ctx, tokenString, salt)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-			c.Abort()
+			merrors.Unauthorized(ctx, "Invalid token")
 			return
 		}
 
-		// Token is valid, set the claims in the context for future handlers
-		c.Set("claims", claims)
+		// Attach the claims to the context for use in the handlers
+		ctx.Set("claims", claims)
 
-		// Continue to the next middleware/handler
-		c.Next()
+		ctx.Next()
 	}
 }
