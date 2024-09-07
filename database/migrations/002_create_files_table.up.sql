@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS files (
     id CHAR(36) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     path TEXT NOT NULL,
+    url VARCHAR(255), -- Added URL column
     size BIGINT NOT NULL,
     content_type VARCHAR(255),
     owner_id CHAR(36) NOT NULL,

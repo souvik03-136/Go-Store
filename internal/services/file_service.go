@@ -18,17 +18,17 @@ func NewFileService() *FileService {
 }
 
 // CreateFile creates a new file record.
-func (s *FileService) CreateFile(ctx *gin.Context, name, path, contentType, ownerID string, size int64) (*models.File, error) {
-	if name == "" || path == "" || contentType == "" || ownerID == "" {
-		merrors.BadRequest(ctx, "Name, path, content type, and owner ID are required")
-		return nil, errors.New("name, path, content type, and owner ID are required")
+func (s *FileService) CreateFile(ctx *gin.Context, name, path, url, contentType, ownerID string, size int64) (*models.File, error) {
+	if name == "" || path == "" || url == "" || contentType == "" || ownerID == "" {
+		merrors.BadRequest(ctx, "Name, path, URL, content type, and owner ID are required")
+		return nil, errors.New("name, path, URL, content type, and owner ID are required")
 	}
 
 	// Generate unique file ID
 	fileID := uuid.New().String()
 
 	// Create a new file model
-	file := models.NewFile(fileID, name, path, contentType, ownerID, size)
+	file := models.NewFile(fileID, name, path, url, contentType, ownerID, size)
 
 	// In a real-world scenario, you would store this in a database.
 	return file, nil
@@ -52,14 +52,14 @@ func (s *FileService) GetFileByID(ctx *gin.Context, fileID string) (*models.File
 }
 
 // UpdateFile updates the file's information.
-func (s *FileService) UpdateFile(ctx *gin.Context, file *models.File, name, path, contentType string, size int64) (*models.File, error) {
-	if name == "" && path == "" && contentType == "" && size == 0 {
+func (s *FileService) UpdateFile(ctx *gin.Context, file *models.File, name, path, url, contentType string, size int64) (*models.File, error) {
+	if name == "" && path == "" && url == "" && contentType == "" && size == 0 {
 		merrors.BadRequest(ctx, "No updates provided")
 		return nil, errors.New("no updates provided")
 	}
 
 	// Update file details
-	file.UpdateFile(name, path, contentType, size)
+	file.UpdateFile(name, path, url, contentType, size)
 
 	// In a real-world scenario, this would involve saving the updated record to the database.
 	return file, nil
@@ -73,13 +73,13 @@ func (s *FileService) DeleteFile(ctx *gin.Context, file *models.File) error {
 	}
 
 	// Perform the deletion
-	err := file.DeleteFile()
+	err := models.DeleteFileByID(file.ID) // Ensure the actual deletion is handled in the database.
 	if err != nil {
 		merrors.InternalServer(ctx, "Failed to delete file")
 		return err
 	}
 
-	// In a real-world scenario, you'd also delete the file from the database and storage.
+	// In a real-world scenario, you'd also delete the file from storage.
 	return nil
 }
 

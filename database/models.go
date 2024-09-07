@@ -13,6 +13,7 @@ type File struct {
 	ID          string         `json:"id"`
 	Name        string         `json:"name"`
 	Path        string         `json:"path"`
+	Url         sql.NullString `json:"url"`
 	Size        int64          `json:"size"`
 	ContentType sql.NullString `json:"content_type"`
 	OwnerID     string         `json:"owner_id"`

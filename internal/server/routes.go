@@ -5,7 +5,8 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq" // or another appropriate driver for your DB
+	_ "github.com/lib/pq"                              // or another appropriate driver for your DB
+	"github.com/souvik03-136/Go-Store/internal/config" // Assuming you have a config package
 	"github.com/souvik03-136/Go-Store/internal/controllers"
 	"github.com/souvik03-136/Go-Store/internal/repository"
 )
@@ -25,9 +26,20 @@ func InitRoutes(router *gin.Engine) {
 	userRepo := repository.NewUserRepository(db)
 	fileRepo := repository.NewFileRepository(db)
 
+	// Initialize configuration (assuming you have a config structure)
+	cfg, err := config.LoadConfig() // You should implement this function to load your config
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
 	// Initialize controllers
 	userController := controllers.NewUserController(userRepo)
-	fileController := controllers.NewFileController(fileRepo)
+
+	// Handle the two return values from NewFileController
+	fileController, err := controllers.NewFileController(fileRepo, cfg)
+	if err != nil {
+		log.Fatalf("Could not create file controller: %v", err)
+	}
 
 	// Auth routes
 	router.POST("/v1/auth/oauth/register", controllers.RegisterOAuthUser)

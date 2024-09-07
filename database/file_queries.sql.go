@@ -10,8 +10,8 @@ import (
 )
 
 const createFile = `-- name: CreateFile :exec
-INSERT INTO files (id, name, path, size, content_type, owner_id, created_at, updated_at)
-VALUES (@id, @name, @path, @size, @content_type, @owner_id, NOW(), NOW())
+INSERT INTO files (id, name, path, url, size, content_type, owner_id, created_at, updated_at)
+VALUES (@id, @name, @path, @url, @size, @content_type, @owner_id, NOW(), NOW())
 `
 
 func (q *Queries) CreateFile(ctx context.Context) error {
@@ -29,7 +29,7 @@ func (q *Queries) DeleteFile(ctx context.Context) error {
 }
 
 const getFileByID = `-- name: GetFileByID :one
-SELECT id, name, path, size, content_type, owner_id, created_at, updated_at FROM files WHERE id = @id
+SELECT id, name, path, url, size, content_type, owner_id, created_at, updated_at FROM files WHERE id = @id
 `
 
 func (q *Queries) GetFileByID(ctx context.Context) (File, error) {
@@ -39,6 +39,7 @@ func (q *Queries) GetFileByID(ctx context.Context) (File, error) {
 		&i.ID,
 		&i.Name,
 		&i.Path,
+		&i.Url,
 		&i.Size,
 		&i.ContentType,
 		&i.OwnerID,
@@ -49,7 +50,7 @@ func (q *Queries) GetFileByID(ctx context.Context) (File, error) {
 }
 
 const listFilesByOwner = `-- name: ListFilesByOwner :many
-SELECT id, name, path, size, content_type, owner_id, created_at, updated_at FROM files WHERE owner_id = @owner_id
+SELECT id, name, path, url, size, content_type, owner_id, created_at, updated_at FROM files WHERE owner_id = @owner_id
 `
 
 func (q *Queries) ListFilesByOwner(ctx context.Context) ([]File, error) {
@@ -65,6 +66,7 @@ func (q *Queries) ListFilesByOwner(ctx context.Context) ([]File, error) {
 			&i.ID,
 			&i.Name,
 			&i.Path,
+			&i.Url,
 			&i.Size,
 			&i.ContentType,
 			&i.OwnerID,
@@ -83,7 +85,7 @@ func (q *Queries) ListFilesByOwner(ctx context.Context) ([]File, error) {
 
 const updateFile = `-- name: UpdateFile :exec
 UPDATE files
-SET name = @name, path = @path, size = @size, content_type = @content_type, updated_at = NOW()
+SET name = @name, path = @path, url = @url, size = @size, content_type = @content_type, updated_at = NOW()
 WHERE id = @id
 `
 

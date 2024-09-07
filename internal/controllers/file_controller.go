@@ -65,7 +65,7 @@ func (c *FileController) CreateFile(ctx *gin.Context) {
 		return
 	}
 
-	fileModel.URL = fileURL // Save the URL returned by cloud storage
+	fileModel.Url = fileURL // Save the URL returned by cloud storage
 
 	// Save the file metadata in the repository
 	if err := c.fileRepo.CreateFile(&fileModel); err != nil {
@@ -135,7 +135,7 @@ func (c *FileController) DeleteFile(ctx *gin.Context) {
 	}
 
 	// Delete the file from cloud storage
-	err = c.storage.DeleteFile(ctx, file.URL)
+	err = c.storage.DeleteFile(ctx, file.Url)
 	if err != nil {
 		merrors.InternalServer(ctx, "Error deleting file from storage")
 		return
