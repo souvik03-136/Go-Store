@@ -72,7 +72,6 @@ cloud-file-storage/
 │   │   ├── unauthorized_401.go
 │   │   └── validation_422.go
 │   │
-│   │
 │   ├── services/
 │   │   ├── auth_service.go       # Business logic for authentication
 │   │   ├── file_service.go       # Business logic for file operations
@@ -150,32 +149,89 @@ cloud-file-storage/
 
 ## Usage
 
-- **Register a User:**
-    ```http
-    POST /register
-    ```
-    Send a POST request with user details to register a new user.
+### Auth Routes
 
-- **Login:**
+- **Register OAuth User:**
     ```http
-    POST /login
+    POST /v1/auth/oauth/register
     ```
-    Send a POST request with user credentials to log in and receive a JWT token.
+    Send a POST request with OAuth user details to register a new user.
 
-- **Upload a File:**
+- **Login OAuth User:**
     ```http
-    POST /upload
+    POST /v1/auth/oauth/login
     ```
-    Send a POST request with the file and authorization token to upload a file.
+    Send a POST request with OAuth credentials to log in and receive a JWT token.
 
-- **Download a File:**
+- **Register Anonymous User:**
     ```http
-    GET /download/:fileID
+    POST /v1/auth/anonymous/register
     ```
-    Send a GET request with the file ID and authorization token to download a file.
+    Send a POST request to register an anonymous user.
 
-- **Share a File:**
-    Implement file sharing functionality by assigning permissions to other users.
+- **Logout User:**
+    ```http
+    POST /v1/auth/logout
+    ```
+    Send a POST request to log out the user and invalidate the JWT token.
+
+- **Validate Token:**
+    ```http
+    GET /v1/auth/validate
+    ```
+    Send a GET request to validate the JWT token.
+
+### User Routes
+
+- **Create a New User:**
+    ```http
+    POST /v1/users
+    ```
+    Send a POST request with user details to create a new user.
+
+- **Get a User by ID:**
+    ```http
+    GET /v1/users/:id
+    ```
+    Send a GET request with the user ID to retrieve user details.
+
+- **Update a User by ID:**
+    ```http
+    PUT /v1/users/:id
+    ```
+    Send a PUT request with user details to update the user.
+
+- **Delete a User by ID:**
+    ```http
+    DELETE /v1/users/:id
+    ```
+    Send a DELETE request with the user ID to remove the user.
+
+### File Routes
+
+- **Create a New File:**
+    ```http
+    POST /v1/files
+    ```
+    Send a POST request with the file and metadata to create a new file.
+
+- **Get a File by ID:**
+    ```http
+    GET /v1/files/:id
+    ```
+    Send a GET request with the file ID to retrieve file details.
+
+- **Update a File by ID:**
+    ```http
+    PUT /v1/files/:id
+    ```
+    Send a PUT request with updated file details to modify the file.
+
+- **Delete a File by ID:**
+    ```http
+    DELETE /v1/files/:id
+    ```
+    Send a DELETE request with the file ID to remove the file.
 
 ## Contributing
 
@@ -183,16 +239,8 @@ Contributions are welcome! Please fork the repository and create a pull request 
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for more details.
-
-## License
-
 This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for more details.
-
 
 ## Acknowledgments
 
 - Inspired by modern cloud storage systems and best practices in cloud architecture.
-```
-
-This `README.md` provides a comprehensive overview of the project, its structure, and how to set it up and use it. Adjust the details as necessary to fit your project's specifics, such as URLs, environment variables, and so on.
