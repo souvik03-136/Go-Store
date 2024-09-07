@@ -1,16 +1,21 @@
-package api
+package main
 
 import (
-	"fmt"
+	"log"
+
+	"github.com/souvik03-136/Go-Store/internal/config"
+	"github.com/souvik03-136/Go-Store/internal/server"
 )
 
 func main() {
+	// Load configuration
+	config.LoadConfig()
 
-	/*server := server.NewServer()
+	// Initialize the server
+	s := server.NewServer()
 
-	err := server.ListenAndServe()
-	if err != nil {
-		panic(fmt.Sprintf("cannot start server: %s", err))
-	}*/
-	fmt.Println("Hello Souvik")
+	// Start the server
+	if err := s.Start(); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
