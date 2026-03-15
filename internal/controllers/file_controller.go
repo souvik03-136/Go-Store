@@ -1,151 +1,140 @@
+// internal/controllers/file_controller.go
+
 package controllers
 
 import (
-	"context"
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/souvik03-136/Go-Store/internal/config"
+	"github.com/souvik03-136/Go-Store/internal/auth"
 	"github.com/souvik03-136/Go-Store/internal/merrors"
-	"github.com/souvik03-136/Go-Store/internal/models"
-	"github.com/souvik03-136/Go-Store/internal/repository"
-	"github.com/souvik03-136/Go-Store/internal/storage"
+	"github.com/souvik03-136/Go-Store/internal/services"
 )
 
+// FileController handles HTTP requests for file management endpoints.
 type FileController struct {
-	fileRepo *repository.FileRepository
-	storage  storage.Storage // This will be either S3 or Google Cloud Storage
+	fileSvc *services.FileService
 }
 
-// NewFileController creates a new FileController with the specified repository and configuration
-func NewFileController(fileRepo *repository.FileRepository, cfg *config.Config) (*FileController, error) {
-	var store storage.Storage
-	var err error
-
-	if cfg.StorageProvider == "s3" {
-		// Initialize AWS S3 Storage
-		store, err = storage.NewS3Storage(cfg.AWS.AccessKeyID, cfg.AWS.SecretAccessKey, cfg.AWS.Region, cfg.AWS.BucketName)
-	} else if cfg.StorageProvider == "gcs" {
-		// Initialize Google Cloud Storage
-		ctx := context.Background()
-		store, err = storage.NewGC3Storage(ctx, cfg.GoogleCloud.CredentialsKey, cfg.GoogleCloud.BucketName)
-	} else {
-		// Return a custom error message
-		return nil, errors.New("unsupported storage provider")
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &FileController{fileRepo: fileRepo, storage: store}, nil
+// NewFileController creates a new FileController.
+func NewFileController(fileSvc *services.FileService) *FileController {
+	return &FileController{fileSvc: fileSvc}
 }
 
-// CreateFile handles the creation of a new file, uploads to storage, and saves metadata in the repository.
+type updateFileRequest struct {
+	Name        string `json:"name"`
+	ContentType string `json:"content_type"`
+}
+
+// requesterID extracts the authenticated subject from the Gin context.
+// It returns an empty string if the context has no authenticated user
+// (e.g. on public endpoints), which downstream ownership checks will reject.
+func requesterID(ctx *gin.Context) string {
+	if v, ok := ctx.Get(auth.SubjectKey); ok {
+		if id, ok := v.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+// CreateFile handles POST /v1/files
+// Expects a multipart/form-data request with the file under the "file" field.
 func (c *FileController) CreateFile(ctx *gin.Context) {
-	// Get file from form-data
-	file, err := ctx.FormFile("file")
+	ownerID := requesterID(ctx)
+	if ownerID == "" {
+		merrors.Unauthorized(ctx, "authentication required")
+		return
+	}
+
+	header, err := ctx.FormFile("file")
 	if err != nil {
-		merrors.BadRequest(ctx, "File upload failed")
+		merrors.BadRequest(ctx, "a file field is required in the multipart form")
 		return
 	}
 
-	// Upload file to cloud storage
-	fileURL, err := c.storage.UploadFile(ctx, file, file.Filename)
+	file, err := c.fileSvc.UploadFile(ctx.Request.Context(), header, ownerID)
 	if err != nil {
-		merrors.InternalServer(ctx, "Error uploading file to storage")
+		merrors.InternalServer(ctx, "file upload failed")
 		return
 	}
 
-	// Create file metadata
-	var fileModel models.File
-	if err := ctx.ShouldBindJSON(&fileModel); err != nil {
-		merrors.BadRequest(ctx, "Invalid request payload")
-		return
-	}
-
-	fileModel.Url = fileURL // Save the URL returned by cloud storage
-
-	// Save the file metadata in the repository
-	if err := c.fileRepo.CreateFile(&fileModel); err != nil {
-		merrors.InternalServer(ctx, "Error saving file metadata")
-		return
-	}
-
-	ctx.JSON(http.StatusCreated, fileModel)
+	ctx.JSON(http.StatusCreated, gin.H{"data": file})
 }
 
-// GetFileByID handles fetching a file's metadata by ID from the repository.
+// GetFileByID handles GET /v1/files/:id
 func (c *FileController) GetFileByID(ctx *gin.Context) {
-	fileID := ctx.Query("id")
+	id := ctx.Param("id")
 
-	if fileID == "" {
-		merrors.BadRequest(ctx, "File ID is required")
-		return
-	}
-
-	file, err := c.fileRepo.GetFileByID(fileID)
+	file, err := c.fileSvc.GetFileByID(id)
 	if err != nil {
-		merrors.NotFound(ctx, "File not found")
+		merrors.NotFound(ctx, "file not found")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, file)
+	ctx.JSON(http.StatusOK, gin.H{"data": file})
 }
 
-// UpdateFile handles updating an existing file's metadata in the repository.
+// ListMyFiles handles GET /v1/files  (authenticated user's own files)
+func (c *FileController) ListMyFiles(ctx *gin.Context) {
+	ownerID := requesterID(ctx)
+	if ownerID == "" {
+		merrors.Unauthorized(ctx, "authentication required")
+		return
+	}
+
+	files, err := c.fileSvc.ListFilesByOwner(ownerID)
+	if err != nil {
+		merrors.InternalServer(ctx, "failed to list files")
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": files})
+}
+
+// UpdateFile handles PUT /v1/files/:id
 func (c *FileController) UpdateFile(ctx *gin.Context) {
-	fileID := ctx.Query("id")
+	id := ctx.Param("id")
+	ownerID := requesterID(ctx)
 
-	if fileID == "" {
-		merrors.BadRequest(ctx, "File ID is required")
+	var req updateFileRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		merrors.Validation(ctx, err.Error())
 		return
 	}
 
-	var file models.File
-	if err := ctx.ShouldBindJSON(&file); err != nil {
-		merrors.BadRequest(ctx, "Invalid request payload")
+	file, err := c.fileSvc.UpdateFile(id, ownerID, req.Name, req.ContentType, 0)
+	if err != nil {
+		switch err.Error() {
+		case "permission denied":
+			merrors.Forbidden(ctx, "you do not own this file")
+		case "file not found":
+			merrors.NotFound(ctx, "file not found")
+		default:
+			merrors.InternalServer(ctx, "failed to update file")
+		}
 		return
 	}
 
-	file.ID = fileID
-	if err := c.fileRepo.UpdateFile(&file); err != nil {
-		merrors.InternalServer(ctx, "Error updating file metadata")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, file)
+	ctx.JSON(http.StatusOK, gin.H{"data": file})
 }
 
-// DeleteFile handles the deletion of a file by ID, deletes the file from cloud storage, and removes metadata from the repository.
+// DeleteFile handles DELETE /v1/files/:id
 func (c *FileController) DeleteFile(ctx *gin.Context) {
-	fileID := ctx.Query("id")
+	id := ctx.Param("id")
+	ownerID := requesterID(ctx)
 
-	if fileID == "" {
-		merrors.BadRequest(ctx, "File ID is required")
+	if err := c.fileSvc.DeleteFile(ctx.Request.Context(), id, ownerID); err != nil {
+		switch err.Error() {
+		case "permission denied":
+			merrors.Forbidden(ctx, "you do not own this file")
+		case "file not found":
+			merrors.NotFound(ctx, "file not found")
+		default:
+			merrors.InternalServer(ctx, "failed to delete file")
+		}
 		return
 	}
 
-	// Fetch the file metadata from the repository
-	file, err := c.fileRepo.GetFileByID(fileID)
-	if err != nil {
-		merrors.NotFound(ctx, "File not found")
-		return
-	}
-
-	// Delete the file from cloud storage
-	err = c.storage.DeleteFile(ctx, file.Url)
-	if err != nil {
-		merrors.InternalServer(ctx, "Error deleting file from storage")
-		return
-	}
-
-	// Delete the file metadata from the repository
-	if err := c.fileRepo.DeleteFile(fileID); err != nil {
-		merrors.InternalServer(ctx, "Error deleting file metadata")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
+	ctx.JSON(http.StatusOK, gin.H{"message": "file deleted successfully"})
 }

@@ -1,48 +1,70 @@
+# Taskfile.yml
 version: '3'
 
 tasks:
   build:
-    desc: "Build the Go application"
+    desc: "Build the Go binary to bin/api"
     cmds:
-      - go build -o bin/api cmd/api/main.go
-  
-  test:
-    desc: "Run Go tests"
-    cmds:
-      - go test ./...
-  
-  lint:
-    desc: "Run Go linter"
-    cmds:
-      - golangci-lint run
+      - go build -o bin/api ./cmd/api
 
   run:
-    desc: "Run the Go application"
+    desc: "Run the application (reads .env automatically)"
     cmds:
-      - go run cmd/api/main.go
+      - go run ./cmd/api
 
-  docker-build:
+  test:
+    desc: "Run all tests with race detector"
+    cmds:
+      - go test -race -count=1 ./...
+
+  test:cover:
+    desc: "Run tests and open an HTML coverage report"
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - open coverage.html
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run ./...
+
+  fmt:
+    desc: "Format all Go source files"
+    cmds:
+      - gofmt -w .
+
+  vet:
+    desc: "Run go vet"
+    cmds:
+      - go vet ./...
+
+  migrate:up:
+    desc: "Apply all pending database migrations"
+    cmds:
+      - ./scripts/migrate.sh up
+
+  migrate:down:
+    desc: "Roll back the last migration"
+    cmds:
+      - ./scripts/migrate.sh rollback
+
+  docker:build:
     desc: "Build the Docker image"
     cmds:
-      - docker build -t cloud-file-storage:latest .
+      - docker build -t go-store:latest .
 
-  docker-compose:
-    desc: "Run Docker Compose"
+  docker:up:
+    desc: "Start all services with Docker Compose"
     cmds:
-      - docker-compose up --build
+      - docker compose up --build
 
-  migrate:
-    desc: "Run database migrations"
+  docker:down:
+    desc: "Stop and remove all Docker Compose containers"
     cmds:
-      - ./scripts/migrate.sh
-
-  deploy:
-    desc: "Deploy the application"
-    cmds:
-      - ./scripts/deploy.sh
+      - docker compose down --remove-orphans
 
   clean:
-    desc: "Clean up build artifacts and Docker images"
+    desc: "Remove build artifacts"
     cmds:
-      - rm -rf bin/
-      - docker rmi cloud-file-storage:latest
+      - rm -rf bin/ coverage.out coverage.html

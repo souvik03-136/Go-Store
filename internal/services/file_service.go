@@ -1,117 +1,148 @@
+// internal/services/file_service.go
+
 package services
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"mime/multipart"
+	"path/filepath"
+	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/souvik03-136/Go-Store/internal/merrors"
 	"github.com/souvik03-136/Go-Store/internal/models"
+	"github.com/souvik03-136/Go-Store/internal/repository"
+	"github.com/souvik03-136/Go-Store/internal/storage"
 )
 
-// FileService handles business logic for file operations.
-type FileService struct{}
-
-// NewFileService creates a new instance of FileService.
-func NewFileService() *FileService {
-	return &FileService{}
+// FileService handles all file-management business logic.
+type FileService struct {
+	fileRepo *repository.FileRepository
+	storage  storage.Storage
 }
 
-// CreateFile creates a new file record.
-func (s *FileService) CreateFile(ctx *gin.Context, name, path, url, contentType, ownerID string, size int64) (*models.File, error) {
-	if name == "" || path == "" || url == "" || contentType == "" || ownerID == "" {
-		merrors.BadRequest(ctx, "Name, path, URL, content type, and owner ID are required")
-		return nil, errors.New("name, path, URL, content type, and owner ID are required")
+// NewFileService creates a new FileService.
+func NewFileService(fileRepo *repository.FileRepository, store storage.Storage) *FileService {
+	return &FileService{fileRepo: fileRepo, storage: store}
+}
+
+// UploadFile uploads the multipart file to cloud storage, persists its
+// metadata, and returns the created File record.
+func (s *FileService) UploadFile(ctx context.Context, header *multipart.FileHeader, ownerID string) (*models.File, error) {
+	if header == nil {
+		return nil, errors.New("file is required")
+	}
+	if ownerID == "" {
+		return nil, errors.New("owner id is required")
 	}
 
-	// Generate unique file ID
-	fileID := uuid.New().String()
+	fileID := generateID()
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	// Store as <ownerID>/<fileID><ext> so each owner's files are namespaced.
+	objectKey := fmt.Sprintf("%s/%s%s", ownerID, fileID, ext)
 
-	// Create a new file model
-	file := models.NewFile(fileID, name, path, url, contentType, ownerID, size)
+	url, err := s.storage.UploadFile(ctx, header, objectKey)
+	if err != nil {
+		return nil, fmt.Errorf("uploading file to storage: %w", err)
+	}
 
-	// In a real-world scenario, you would store this in a database.
+	file := models.NewFile(
+		fileID,
+		header.Filename,
+		objectKey,
+		url,
+		header.Header.Get("Content-Type"),
+		ownerID,
+		header.Size,
+	)
+
+	if err := s.fileRepo.CreateFile(file); err != nil {
+		// Attempt to clean up orphaned cloud object on DB failure.
+		_ = s.storage.DeleteFile(ctx, objectKey)
+		return nil, fmt.Errorf("persisting file metadata: %w", err)
+	}
+
 	return file, nil
 }
 
-// GetFileByID retrieves a file by its ID.
-func (s *FileService) GetFileByID(ctx *gin.Context, fileID string) (*models.File, error) {
-	// This would normally query the database for the file.
-	file, err := models.GetFileByID(fileID) // You need to implement this function in models/files.go.
+// GetFileByID retrieves file metadata, enforcing that the requester owns
+// the file or has been granted read access (permission check is optional
+// and can be layered on top by the controller).
+func (s *FileService) GetFileByID(id string) (*models.File, error) {
+	if id == "" {
+		return nil, errors.New("file id is required")
+	}
+	return s.fileRepo.GetFileByID(id)
+}
+
+// ListFilesByOwner returns all files belonging to ownerID.
+func (s *FileService) ListFilesByOwner(ownerID string) ([]*models.File, error) {
+	if ownerID == "" {
+		return nil, errors.New("owner id is required")
+	}
+	return s.fileRepo.ListFilesByOwner(ownerID)
+}
+
+// UpdateFile applies non-zero field updates to the file identified by id.
+// Only the owner may update their own files.
+func (s *FileService) UpdateFile(id, requesterID, name, contentType string, size int64) (*models.File, error) {
+	if id == "" {
+		return nil, errors.New("file id is required")
+	}
+
+	file, err := s.fileRepo.GetFileByID(id)
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to retrieve file")
 		return nil, err
 	}
 
-	if file == nil {
-		merrors.NotFound(ctx, "File not found")
-		return nil, errors.New("file not found")
+	if !file.IsOwner(requesterID) {
+		return nil, errors.New("permission denied")
+	}
+
+	if name != "" {
+		if err := file.Rename(name); err != nil {
+			return nil, err
+		}
+	}
+	if contentType != "" {
+		file.ContentType = contentType
+	}
+	if size > 0 {
+		file.Size = size
+	}
+
+	if err := s.fileRepo.UpdateFile(file); err != nil {
+		return nil, fmt.Errorf("persisting file update: %w", err)
 	}
 
 	return file, nil
 }
 
-// UpdateFile updates the file's information.
-func (s *FileService) UpdateFile(ctx *gin.Context, file *models.File, name, path, url, contentType string, size int64) (*models.File, error) {
-	if name == "" && path == "" && url == "" && contentType == "" && size == 0 {
-		merrors.BadRequest(ctx, "No updates provided")
-		return nil, errors.New("no updates provided")
+// DeleteFile removes the cloud object and the metadata record.
+// Only the file owner may delete their own files.
+func (s *FileService) DeleteFile(ctx context.Context, id, requesterID string) error {
+	if id == "" {
+		return errors.New("file id is required")
 	}
 
-	// Update file details
-	file.UpdateFile(name, path, url, contentType, size)
-
-	// In a real-world scenario, this would involve saving the updated record to the database.
-	return file, nil
-}
-
-// DeleteFile removes the file by its ID.
-func (s *FileService) DeleteFile(ctx *gin.Context, file *models.File) error {
-	if file == nil {
-		merrors.NotFound(ctx, "File not found")
-		return errors.New("file not found")
-	}
-
-	// Perform the deletion
-	err := models.DeleteFileByID(file.ID) // Ensure the actual deletion is handled in the database.
+	file, err := s.fileRepo.GetFileByID(id)
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to delete file")
 		return err
 	}
 
-	// In a real-world scenario, you'd also delete the file from storage.
+	if !file.IsOwner(requesterID) {
+		return errors.New("permission denied")
+	}
+
+	// Delete from cloud storage first; if that fails do not remove the metadata
+	// so the admin can retry the cloud deletion.
+	if err := s.storage.DeleteFile(ctx, file.Path); err != nil {
+		return fmt.Errorf("deleting object from storage: %w", err)
+	}
+
+	if err := s.fileRepo.DeleteFile(id); err != nil {
+		return fmt.Errorf("deleting file metadata: %w", err)
+	}
+
 	return nil
-}
-
-// RenameFile renames the file with a new name.
-func (s *FileService) RenameFile(ctx *gin.Context, file *models.File, newName string) (*models.File, error) {
-	if newName == "" {
-		merrors.BadRequest(ctx, "New file name is required")
-		return nil, errors.New("new file name is required")
-	}
-
-	err := file.RenameFile(newName)
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to rename file")
-		return nil, err
-	}
-
-	// In a real-world scenario, this would involve saving the updated record to the database.
-	return file, nil
-}
-
-// ListAllFiles retrieves all the files in the system.
-func (s *FileService) ListAllFiles(ctx *gin.Context) ([]*models.File, error) {
-	files, err := models.GetAllFiles()
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to retrieve files")
-		return nil, err
-	}
-
-	return files, nil
-}
-
-// CheckFileOwnership checks if a user is the owner of a file.
-func (s *FileService) CheckFileOwnership(ctx *gin.Context, file *models.File, userID string) bool {
-	return file.IsOwner(userID)
 }

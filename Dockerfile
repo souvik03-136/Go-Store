@@ -1,32 +1,35 @@
-# Stage 1: Build the application
-FROM golang:1.21 AS builder
+# Dockerfile
 
-# Set the Current Working Directory inside the container
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM golang:1.21-alpine AS builder
+
+# Install CA certificates and git (needed for private module fetching).
+RUN apk add --no-cache ca-certificates git
+
 WORKDIR /app
 
-# Copy the Go Modules manifests
+# Download dependencies first so Docker caches the layer when only source
+# code changes (not go.mod / go.sum).
 COPY go.mod go.sum ./
-
-# Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download
 
-# Copy the source code into the container
 COPY . .
 
-# Build the Go app
-RUN go build -o bin/api cmd/api/main.go
+# Build a fully static binary (-tags netgo) so it runs in a scratch image.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -tags netgo -ldflags="-w -s" -o bin/api ./cmd/api
 
-# Stage 2: Create the final image
-FROM debian:bullseye-slim
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM gcr.io/distroless/static-debian12
 
-# Set the Current Working Directory inside the container
 WORKDIR /app
 
-# Copy the Pre-built binary file from the previous stage
+# Copy the binary and nothing else.
 COPY --from=builder /app/bin/api .
 
-# Expose port 8080 to the outside world
 EXPOSE 8080
 
-# Command to run the executable
-CMD ["./api"]
+# Run as non-root (distroless provides uid 65532 "nonroot" by default).
+USER nonroot:nonroot
+
+ENTRYPOINT ["./api"]

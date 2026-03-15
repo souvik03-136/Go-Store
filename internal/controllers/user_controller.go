@@ -1,3 +1,5 @@
+// internal/controllers/user_controller.go
+
 package controllers
 
 import (
@@ -5,91 +7,88 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/souvik03-136/Go-Store/internal/merrors"
-	"github.com/souvik03-136/Go-Store/internal/models"
-	"github.com/souvik03-136/Go-Store/internal/repository"
+	"github.com/souvik03-136/Go-Store/internal/services"
 )
 
+// UserController handles HTTP requests for user management endpoints.
 type UserController struct {
-	userRepo *repository.UserRepository
+	userSvc *services.UserService
 }
 
-// NewUserController creates a new instance of UserController.
-func NewUserController(userRepo *repository.UserRepository) *UserController {
-	return &UserController{userRepo: userRepo}
+// NewUserController creates a new UserController.
+func NewUserController(userSvc *services.UserService) *UserController {
+	return &UserController{userSvc: userSvc}
 }
 
-// CreateUser handles user registration.
+type createUserRequest struct {
+	Username string `json:"username" binding:"required"`
+	Email    string `json:"email"    binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+type updateUserRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email"    binding:"omitempty,email"`
+	Password string `json:"password" binding:"omitempty,min=8"`
+}
+
+// CreateUser handles POST /v1/users
 func (c *UserController) CreateUser(ctx *gin.Context) {
-	var user models.User
-
-	if err := ctx.ShouldBindJSON(&user); err != nil {
-		merrors.BadRequest(ctx, "Invalid request payload")
+	var req createUserRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		merrors.Validation(ctx, err.Error())
 		return
 	}
 
-	if err := c.userRepo.CreateUser(&user); err != nil {
-		merrors.InternalServer(ctx, "Error creating user")
-		return
-	}
-
-	ctx.JSON(http.StatusCreated, user)
-}
-
-// GetUserByID handles fetching a user by their ID.
-func (c *UserController) GetUserByID(ctx *gin.Context) {
-	userID := ctx.Query("id")
-
-	if userID == "" {
-		merrors.BadRequest(ctx, "User ID is required")
-		return
-	}
-
-	user, err := c.userRepo.GetUserByID(userID)
+	user, err := c.userSvc.CreateUser(req.Username, req.Email, req.Password)
 	if err != nil {
-		merrors.NotFound(ctx, "User not found")
+		merrors.Conflict(ctx, err.Error())
 		return
 	}
 
-	ctx.JSON(http.StatusOK, user)
+	ctx.JSON(http.StatusCreated, gin.H{"data": user})
 }
 
-// UpdateUser handles updating a user's information.
+// GetUserByID handles GET /v1/users/:id
+func (c *UserController) GetUserByID(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	user, err := c.userSvc.GetUserByID(id)
+	if err != nil {
+		merrors.NotFound(ctx, "user not found")
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": user})
+}
+
+// UpdateUser handles PUT /v1/users/:id
 func (c *UserController) UpdateUser(ctx *gin.Context) {
-	userID := ctx.Query("id")
+	id := ctx.Param("id")
 
-	if userID == "" {
-		merrors.BadRequest(ctx, "User ID is required")
+	var req updateUserRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		merrors.Validation(ctx, err.Error())
 		return
 	}
 
-	var user models.User
-	if err := ctx.ShouldBindJSON(&user); err != nil {
-		merrors.BadRequest(ctx, "Invalid request payload")
+	user, err := c.userSvc.UpdateUser(id, req.Username, req.Email, req.Password)
+	if err != nil {
+		merrors.InternalServer(ctx, "failed to update user")
 		return
 	}
 
-	user.ID = userID
-	if err := c.userRepo.UpdateUser(&user); err != nil {
-		merrors.InternalServer(ctx, "Error updating user")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, user)
+	ctx.JSON(http.StatusOK, gin.H{"data": user})
 }
 
-// DeleteUser handles the deletion of a user by their ID.
+// DeleteUser handles DELETE /v1/users/:id
 func (c *UserController) DeleteUser(ctx *gin.Context) {
-	userID := ctx.Query("id")
+	id := ctx.Param("id")
 
-	if userID == "" {
-		merrors.BadRequest(ctx, "User ID is required")
+	if err := c.userSvc.DeleteUser(id); err != nil {
+		merrors.NotFound(ctx, "user not found")
 		return
 	}
 
-	if err := c.userRepo.DeleteUser(userID); err != nil {
-		merrors.InternalServer(ctx, "Error deleting user")
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
+	ctx.JSON(http.StatusOK, gin.H{"message": "user deleted successfully"})
 }

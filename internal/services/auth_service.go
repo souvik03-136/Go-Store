@@ -1,101 +1,107 @@
+// internal/services/auth_service.go
+
 package services
 
 import (
-	"os"
+	"errors"
+	"fmt"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/gin-gonic/gin"
 	"github.com/souvik03-136/Go-Store/internal/auth"
-	"github.com/souvik03-136/Go-Store/internal/merrors"
+	"github.com/souvik03-136/Go-Store/internal/models"
+	"github.com/souvik03-136/Go-Store/internal/repository"
 )
 
-// AuthService handles the business logic for authentication.
-type AuthService struct{}
+const tokenExpiry = 24 * time.Hour
 
-// NewAuthService creates a new instance of AuthService.
-func NewAuthService() *AuthService {
-	return &AuthService{}
+// AuthService handles all authentication business logic.
+type AuthService struct {
+	userRepo  *repository.UserRepository
+	jwtSecret string
 }
 
-// GenerateToken generates a JWT token for a given username.
-func (s *AuthService) GenerateToken(ctx *gin.Context, username string) (string, string, error) {
-	salt, err := auth.GenerateDynamicSalt(ctx)
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to generate dynamic salt")
-		return "", "", err
+// NewAuthService creates a new AuthService.
+func NewAuthService(userRepo *repository.UserRepository, jwtSecret string) *AuthService {
+	return &AuthService{
+		userRepo:  userRepo,
+		jwtSecret: jwtSecret,
 	}
-
-	claims := &jwt.StandardClaims{
-		ExpiresAt: time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
-		Subject:   username,
-	}
-
-	signingSecret, err := auth.GetSigningSecret(ctx, salt)
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to get signing secret")
-		return "", "", err
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(signingSecret)
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to sign the JWT token")
-		return "", "", err
-	}
-
-	return tokenString, salt, nil
 }
 
-// ValidateToken validates a given JWT token using the provided salt.
-func (s *AuthService) ValidateToken(ctx *gin.Context, tokenString string, salt string) (*jwt.StandardClaims, error) {
-	signingSecret, err := auth.GetSigningSecret(ctx, salt)
+// TokenPair holds a signed JWT and the salt required to validate it.
+type TokenPair struct {
+	Token string `json:"token"`
+	Salt  string `json:"salt"`
+}
+
+// RegisterOAuth creates a new user record from the supplied credentials and
+// returns a TokenPair. It rejects duplicate email addresses.
+func (s *AuthService) RegisterOAuth(username, email, password string) (*models.User, *TokenPair, error) {
+	// Check for duplicate email
+	if existing, _ := s.userRepo.GetUserByEmail(email); existing != nil {
+		return nil, nil, errors.New("a user with that email already exists")
+	}
+
+	user, err := models.NewUser(generateID(), username, email, password)
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to get signing secret")
-		return nil, err
+		return nil, nil, fmt.Errorf("building user: %w", err)
 	}
 
-	token, err := jwt.ParseWithClaims(tokenString, &jwt.StandardClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return signingSecret, nil
-	})
+	if err := s.userRepo.CreateUser(user); err != nil {
+		return nil, nil, fmt.Errorf("persisting user: %w", err)
+	}
 
+	pair, err := s.issueToken(user.ID)
 	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			merrors.Unauthorized(ctx, "Invalid JWT signature")
-			return nil, err
-		}
-		merrors.Unauthorized(ctx, "Invalid JWT token")
-		return nil, err
+		return nil, nil, err
 	}
 
-	if claims, ok := token.Claims.(*jwt.StandardClaims); ok && token.Valid {
-		return claims, nil
+	return user, pair, nil
+}
+
+// LoginOAuth authenticates a user by email + password and issues a TokenPair.
+func (s *AuthService) LoginOAuth(email, password string) (*models.User, *TokenPair, error) {
+	user, err := s.userRepo.GetUserByEmail(email)
+	if err != nil {
+		return nil, nil, errors.New("invalid credentials")
 	}
 
-	merrors.Unauthorized(ctx, "Invalid JWT token")
-	return nil, err
-}
-
-// HandleOAuthLogin processes OAuth login and returns the JWT token and any associated error.
-func (s *AuthService) HandleOAuthLogin(ctx *gin.Context, oauthID string) (string, string, error) {
-	// Perform OAuth login logic here (e.g., verify OAuth token, retrieve user details)
-	// For now, we assume the OAuth login is successful and return a token.
-
-	username := "user_from_oauth_" + oauthID // This should be the username or unique identifier from the OAuth provider.
-	return s.GenerateToken(ctx, username)
-}
-
-// HandleAnonymousLogin generates an anonymous ID and returns a JWT token.
-func (s *AuthService) HandleAnonymousLogin(ctx *gin.Context) (string, string, error) {
-	anonymousID := auth.GenerateAnonymousID()
-	return s.GenerateToken(ctx, anonymousID)
-}
-
-// CheckJWTSecret verifies the presence of the JWT secret key in environment variables.
-func (s *AuthService) CheckJWTSecret(ctx *gin.Context) error {
-	if os.Getenv("JWT_SECRET_KEY") == "" {
-		merrors.InternalServer(ctx, "JWT secret key not set in environment variables")
-		return nil
+	if !user.CheckPassword(password) {
+		return nil, nil, errors.New("invalid credentials")
 	}
-	return nil
+
+	pair, err := s.issueToken(user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return user, pair, nil
+}
+
+// RegisterAnonymous issues a TokenPair for an anonymous session without
+// creating a persistent user record.
+func (s *AuthService) RegisterAnonymous() (string, *TokenPair, error) {
+	anonID := auth.GenerateAnonymousID()
+	pair, err := s.issueToken(anonID)
+	if err != nil {
+		return "", nil, err
+	}
+	return anonID, pair, nil
+}
+
+// ValidateToken parses and validates a JWT, returning the subject claim.
+func (s *AuthService) ValidateToken(tokenString, salt string) (string, error) {
+	claims, err := auth.ValidateToken(s.jwtSecret, tokenString, salt)
+	if err != nil {
+		return "", fmt.Errorf("invalid token: %w", err)
+	}
+	return claims.Subject, nil
+}
+
+func (s *AuthService) issueToken(subject string) (*TokenPair, error) {
+	tokenString, salt, err := auth.GenerateToken(s.jwtSecret, subject, tokenExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("generating token: %w", err)
+	}
+	return &TokenPair{Token: tokenString, Salt: salt}, nil
 }

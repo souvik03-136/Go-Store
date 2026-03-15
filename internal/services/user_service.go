@@ -1,88 +1,92 @@
+// internal/services/user_service.go
+
 package services
 
 import (
 	"errors"
-	"time"
+	"fmt"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/souvik03-136/Go-Store/internal/merrors"
 	"github.com/souvik03-136/Go-Store/internal/models"
+	"github.com/souvik03-136/Go-Store/internal/repository"
 )
 
-// UserService handles the business logic for user operations.
-type UserService struct{}
-
-// NewUserService creates a new instance of UserService.
-func NewUserService() *UserService {
-	return &UserService{}
+// UserService handles all user management business logic.
+type UserService struct {
+	userRepo *repository.UserRepository
 }
 
-// CreateUser creates a new user record.
-func (s *UserService) CreateUser(ctx *gin.Context, username, email, password string) (*models.User, error) {
-	// Validate input
+// NewUserService creates a new UserService.
+func NewUserService(userRepo *repository.UserRepository) *UserService {
+	return &UserService{userRepo: userRepo}
+}
+
+// CreateUser validates input, hashes the password, persists the user, and
+// returns the created User (PasswordHash is never exposed via JSON).
+func (s *UserService) CreateUser(username, email, password string) (*models.User, error) {
 	if username == "" || email == "" || password == "" {
-		merrors.BadRequest(ctx, "Username, email, and password are required")
-		return nil, errors.New("username, email, and password are required")
+		return nil, errors.New("username, email, and password are all required")
 	}
 
-	// Generate user ID
-	userID := uuid.New().String()
+	// Reject duplicate emails up front with a friendly error.
+	if existing, _ := s.userRepo.GetUserByEmail(email); existing != nil {
+		return nil, errors.New("a user with that email already exists")
+	}
 
-	// Create the user model
-	user, err := models.NewUser(userID, username, email, password)
+	user, err := models.NewUser(generateID(), username, email, password)
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to create user")
-		return nil, err
+		return nil, fmt.Errorf("building user model: %w", err)
 	}
 
-	// In a real application, you'd save the user in a database here
-	return user, nil
-}
-
-// GetUserByID retrieves a user by their ID.
-func (s *UserService) GetUserByID(ctx *gin.Context, userID string) (*models.User, error) {
-	// Simulate a function to retrieve user by ID (you'll implement the actual DB query)
-	user, err := models.GetUserByID(userID) // You need to implement this in models/user.go
-	if err != nil {
-		merrors.InternalServer(ctx, "Failed to retrieve user by ID")
-		return nil, err
-	}
-
-	if user == nil {
-		return nil, errors.New("user not found")
+	if err := s.userRepo.CreateUser(user); err != nil {
+		return nil, fmt.Errorf("persisting user: %w", err)
 	}
 
 	return user, nil
 }
 
-// UpdateUser updates the user's information.
-func (s *UserService) UpdateUser(ctx *gin.Context, user *models.User, username, email, password string) (*models.User, error) {
-	if username == "" && email == "" && password == "" {
-		merrors.BadRequest(ctx, "No updates provided")
-		return nil, errors.New("no updates provided")
+// GetUserByID fetches a single user by their UUID.
+func (s *UserService) GetUserByID(id string) (*models.User, error) {
+	if id == "" {
+		return nil, errors.New("user id is required")
+	}
+	return s.userRepo.GetUserByID(id)
+}
+
+// UpdateUser applies non-empty field updates to the user identified by id.
+// If password is non-empty it is re-hashed before saving.
+func (s *UserService) UpdateUser(id, username, email, password string) (*models.User, error) {
+	if id == "" {
+		return nil, errors.New("user id is required")
 	}
 
-	// Update user model
-	err := user.UpdateUser(username, email, password)
+	user, err := s.userRepo.GetUserByID(id)
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to update user")
 		return nil, err
 	}
 
-	// In a real application, you'd save the updated user in the database here
+	if username != "" {
+		user.Username = username
+	}
+	if email != "" {
+		user.Email = email
+	}
+	if password != "" {
+		if err := user.SetPassword(password); err != nil {
+			return nil, fmt.Errorf("updating password: %w", err)
+		}
+	}
+
+	if err := s.userRepo.UpdateUser(user); err != nil {
+		return nil, fmt.Errorf("persisting user update: %w", err)
+	}
+
 	return user, nil
 }
 
-// DeleteUser removes a user by their ID.
-func (s *UserService) DeleteUser(ctx *gin.Context, user *models.User) error {
-	// In a real application, you'd delete the user from the database here
-	// Here, we're just simulating the deletion by clearing user data
-	user.Username = ""
-	user.Email = ""
-	user.Password = ""
-	user.UpdatedAt = time.Now()
-
-	// In a real application, ensure database deletion
-	return nil
+// DeleteUser removes the user identified by id.
+func (s *UserService) DeleteUser(id string) error {
+	if id == "" {
+		return errors.New("user id is required")
+	}
+	return s.userRepo.DeleteUser(id)
 }

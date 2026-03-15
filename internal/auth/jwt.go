@@ -1,90 +1,90 @@
+// internal/auth/jwt.go
+
 package auth
 
 import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"os"
+	"errors"
+	"fmt"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/gin-gonic/gin"
-	"github.com/souvik03-136/Go-Store/internal/merrors"
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// GetSigningSecret combines the base secret with the dynamic salt.
-func GetSigningSecret(ctx *gin.Context, salt string) ([]byte, error) {
-	baseSecret := os.Getenv("JWT_SECRET_KEY")
-	if baseSecret == "" {
-		merrors.InternalServer(ctx, "JWT secret key not set in environment variables")
-		return nil, nil
-	}
-	combined := baseSecret + salt
-	hash := sha256.Sum256([]byte(combined))
-	return hash[:], nil
+// Claims holds the JWT standard claims plus our custom fields.
+type Claims struct {
+	Subject string `json:"sub"`
+	jwt.RegisteredClaims
 }
 
-// GenerateDynamicSalt creates a dynamic salt for added security.
-func GenerateDynamicSalt(ctx *gin.Context) (string, error) {
+// GenerateDynamicSalt creates a cryptographically-random 16-byte salt
+// encoded as base64, used to make each token's signing key unique.
+func GenerateDynamicSalt() (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
-		merrors.InternalServer(ctx, "Failed to generate dynamic salt")
-		return "", err
+		return "", fmt.Errorf("generating salt: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(salt), nil
 }
 
-// GenerateToken creates a JWT with a dynamic component.
-func GenerateToken(ctx *gin.Context, username string) (string, string, error) {
-	salt, err := GenerateDynamicSalt(ctx)
+// signingKey derives a per-token HMAC key by SHA-256 hashing the base secret
+// concatenated with the per-token salt. This means a compromised token cannot
+// be used to sign other tokens even if the attacker knows the salt.
+func signingKey(baseSecret, salt string) []byte {
+	combined := baseSecret + salt
+	hash := sha256.Sum256([]byte(combined))
+	return hash[:]
+}
+
+// GenerateToken produces a signed JWT and the salt used to derive its signing
+// key. Both values must be returned to the client; the salt is required to
+// validate the token later.
+func GenerateToken(baseSecret, subject string, expiry time.Duration) (tokenString, salt string, err error) {
+	salt, err = GenerateDynamicSalt()
 	if err != nil {
 		return "", "", err
 	}
 
-	claims := &jwt.StandardClaims{
-		ExpiresAt: time.Now().Add(time.Hour * 24).Unix(),
-		Subject:   username,
-	}
-
-	signingSecret, err := GetSigningSecret(ctx, salt)
-	if err != nil {
-		return "", "", err
+	now := time.Now()
+	claims := Claims{
+		Subject: subject,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   subject,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(expiry)),
+		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(signingSecret)
+	tokenString, err = token.SignedString(signingKey(baseSecret, salt))
 	if err != nil {
-		merrors.InternalServer(ctx, "Failed to sign the JWT token")
-		return "", "", err
+		return "", "", fmt.Errorf("signing token: %w", err)
 	}
 
 	return tokenString, salt, nil
 }
 
-// ValidateToken checks the validity of a JWT using the provided salt.
-func ValidateToken(ctx *gin.Context, tokenString string, salt string) (*jwt.StandardClaims, error) {
-	signingSecret, err := GetSigningSecret(ctx, salt)
-	if err != nil {
-		return nil, err
-	}
+// ValidateToken parses and validates a JWT, returning the claims on success.
+// The same salt that was returned by GenerateToken must be provided.
+func ValidateToken(baseSecret, tokenString, salt string) (*Claims, error) {
+	key := signingKey(baseSecret, salt)
 
-	token, err := jwt.ParseWithClaims(tokenString, &jwt.StandardClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return signingSecret, nil
-	})
-
-	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			merrors.Unauthorized(ctx, "Invalid JWT signature")
-			return nil, err
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		merrors.Unauthorized(ctx, "Invalid JWT token")
-		return nil, err
+		return key, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("parsing token: %w", err)
 	}
 
-	if claims, ok := token.Claims.(*jwt.StandardClaims); ok && token.Valid {
-		return claims, nil
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token claims")
 	}
 
-	merrors.Unauthorized(ctx, "Invalid JWT token")
-	return nil, err
+	return claims, nil
 }

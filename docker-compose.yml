@@ -1,29 +1,54 @@
+# docker-compose.yml
+
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${DB_DATABASE}
-      MYSQL_USER: ${DB_USERNAME}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      POSTGRES_DB:       ${DB_DATABASE}
+      POSTGRES_USER:     ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "${DB_PORT}:3306"
+      - "${DB_PORT:-5432}:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=mysql://${DB_USERNAME}:${DB_PASSWORD}@mysql:3306/${DB_DATABASE}
-      - JWT_SECRET=${JWT_SECRET}
+      APP_ENV:          production
+      SERVER_PORT:      "8080"
+      DB_DRIVER:        postgres
+      DB_HOST:          postgres
+      DB_PORT:          "5432"
+      DB_DATABASE:      ${DB_DATABASE}
+      DB_USERNAME:      ${DB_USERNAME}
+      DB_PASSWORD:      ${DB_PASSWORD}
+      DB_SSL_MODE:      disable
+      JWT_SECRET_KEY:   ${JWT_SECRET_KEY}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER}
+      AWS_REGION:            ${AWS_REGION:-us-east-1}
+      AWS_BUCKET_NAME:       ${AWS_BUCKET_NAME:-}
+      AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      GOOGLE_CLOUD_PROJECT_ID:      ${GOOGLE_CLOUD_PROJECT_ID:-}
+      GOOGLE_CLOUD_BUCKET_NAME:     ${GOOGLE_CLOUD_BUCKET_NAME:-}
+      GOOGLE_CLOUD_CREDENTIALS_FILE: ${GOOGLE_CLOUD_CREDENTIALS_FILE:-}
     depends_on:
-      - mysql
+      postgres:
+        condition: service_healthy
 
 volumes:
-  mysql_data:
+  postgres_data:

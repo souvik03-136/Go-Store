@@ -8,14 +8,17 @@ import (
 )
 
 func main() {
-	// Load configuration
-	config.LoadConfig()
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
 
-	// Initialize the server
-	s := server.NewServer()
+	s, err := server.NewServer(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize server: %v", err)
+	}
 
-	// Start the server
 	if err := s.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Server exited with error: %v", err)
 	}
 }

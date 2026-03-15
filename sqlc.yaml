@@ -1,28 +1,25 @@
+# sqlc.yaml
+# NOTE: sqlc is optional in this project. The repository layer (internal/repository/)
+# uses hand-written SQL via database/sql, which is simpler and fully debuggable.
+# This file is kept here as a reference if you want to regenerate the DB layer later.
+#
+# If you do regenerate, run:  sqlc generate
+
 version: "2"
-cloud:
-    organization: ""
-    project: ""
-    hostname: ""
-sql: 
+sql:
   - schema: "database/migrations"
     queries: "database/queries"
-    engine: "mysql"
+    engine: "postgresql"          # was incorrectly set to "mysql" while db.go used pgx
     gen:
       go:
-        package: "database"
-        sql_package: "pgx/v5"
-        out: "database"
+        package: "db"
+        out: "internal/db"
+        sql_package: "database/sql"   # use stdlib, not pgx
         emit_json_tags: true
         emit_pointers_for_null_types: true
         json_tags_case_style: "snake"
-        json_tags_id_uppercase: true
         overrides:
           - db_type: "uuid"
-            go_type:
-              import: "github.com/google/uuid"
-              type: "UUID"
-          - db_type: "uuid"
-            nullable: true
             go_type:
               import: "github.com/google/uuid"
               type: "UUID"

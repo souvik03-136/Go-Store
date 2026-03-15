@@ -1,3 +1,5 @@
+// internal/auth/middleware.go
+
 package auth
 
 import (
@@ -5,19 +7,24 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/souvik03-136/Go-Store/internal/merrors"
 )
 
-// CORSMiddleware handles Cross-Origin Resource Sharing (CORS) settings.
+const (
+	ClaimsKey  = "claims"
+	SubjectKey = "subject"
+)
+
+// CORSMiddleware sets permissive CORS headers suitable for development.
+// In production, replace the wildcard origin with your actual domain.
 func CORSMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		ctx.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
-		ctx.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type")
-		ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		ctx.Header("Access-Control-Allow-Origin", "*")
+		ctx.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		ctx.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Salt")
+		ctx.Header("Access-Control-Expose-Headers", "Content-Length, Content-Type")
+		ctx.Header("Access-Control-Allow-Credentials", "true")
 
-		if ctx.Request.Method == "OPTIONS" {
+		if ctx.Request.Method == http.MethodOptions {
 			ctx.AbortWithStatus(http.StatusNoContent)
 			return
 		}
@@ -26,49 +33,51 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// RequestLogger logs the details of each incoming request.
+// RequestLogger logs the method, path, status code, and latency of each request.
 func RequestLogger() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		// Log the incoming request details
-		ctx.Next()
-		// Optionally log response details if needed
-	}
+	return gin.Logger()
 }
 
-// JWTAuthMiddleware verifies the JWT token and extracts claims.
-func JWTAuthMiddleware() gin.HandlerFunc {
+// JWTAuthMiddleware verifies the Bearer token in the Authorization header.
+// The token salt must be supplied via the X-Salt request header.
+// On success, the parsed *Claims are stored in the Gin context under ClaimsKey.
+func JWTAuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		authHeader := ctx.GetHeader("Authorization")
 		if authHeader == "" {
-			merrors.Unauthorized(ctx, "Authorization header is missing")
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "authorization header is missing",
+			})
 			return
 		}
 
-		// Extract the token from the header
-		tokenParts := strings.Split(authHeader, "Bearer ")
-		if len(tokenParts) != 2 {
-			merrors.Unauthorized(ctx, "Invalid authorization header format")
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "authorization header format must be: Bearer <token>",
+			})
 			return
 		}
-		tokenString := tokenParts[1]
+		tokenString := parts[1]
 
-		// Extract the salt (assuming it's sent as a query parameter, header, or some other way)
-		salt := ctx.Query("salt")
+		salt := ctx.GetHeader("X-Salt")
 		if salt == "" {
-			merrors.Unauthorized(ctx, "Salt is missing")
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "X-Salt header is required",
+			})
 			return
 		}
 
-		// Validate the token
-		claims, err := ValidateToken(ctx, tokenString, salt)
+		claims, err := ValidateToken(jwtSecret, tokenString, salt)
 		if err != nil {
-			merrors.Unauthorized(ctx, "Invalid token")
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid or expired token",
+			})
 			return
 		}
 
-		// Attach the claims to the context for use in the handlers
-		ctx.Set("claims", claims)
-
+		ctx.Set(ClaimsKey, claims)
+		ctx.Set(SubjectKey, claims.Subject)
 		ctx.Next()
 	}
 }

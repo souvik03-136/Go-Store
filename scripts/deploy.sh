@@ -1,41 +1,35 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# scripts/deploy.sh
+#
+# Deploys the application. With Docker Compose it rebuilds and restarts
+# containers; without it it does a direct binary swap.
 
-# Exit script on error
-set -e
+set -euo pipefail
 
-# Function to deploy the Go application
-deploy_application() {
-    echo "Starting deployment..."
+echo "==> Pulling latest code…"
+git pull origin main
 
-    # Pull the latest code from the Git repository
-    echo "Pulling the latest code..."
-    git pull origin main
+echo "==> Running database migrations…"
+./scripts/migrate.sh up
 
-    # Build the Go application
-    echo "Building the Go application..."
-    go build -o bin/app ./cmd/api
+if [[ -f "docker-compose.yml" ]]; then
+  echo "==> Docker Compose detected — rebuilding and restarting…"
+  docker compose down --remove-orphans
+  docker compose build --no-cache
+  docker compose up -d
+  echo "==> Deployment complete. Containers running:"
+  docker compose ps
+else
+  echo "==> Building binary…"
+  go build -o bin/api ./cmd/api
 
-    # Check if Docker is used and rebuild/restart containers if necessary
-    if [ -f "docker-compose.yml" ]; then
-        echo "Docker Compose detected. Rebuilding containers..."
-        docker-compose down
-        docker-compose build
-        docker-compose up -d
-    else
-        echo "Starting the application directly..."
-        # Stop the running application (if any)
-        if pgrep -f "bin/app" > /dev/null; then
-            echo "Stopping running application..."
-            pkill -f "bin/app"
-        fi
+  if pgrep -f "bin/api" > /dev/null; then
+    echo "==> Stopping existing process…"
+    pkill -f "bin/api"
+    sleep 2
+  fi
 
-        # Start the application
-        echo "Starting the new version of the application..."
-        nohup ./bin/app &> /dev/null &
-    fi
-
-    echo "Deployment completed!"
-}
-
-# Run deployment
-deploy_application
+  echo "==> Starting new binary…"
+  nohup ./bin/api >> logs/app.log 2>&1 &
+  echo "==> Deployment complete. PID: $!"
+fi

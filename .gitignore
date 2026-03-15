@@ -1,0 +1,45 @@
+# .gitignore
+
+# Compiled binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Test coverage output
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# IDE / editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment variable files — never commit real secrets
+.env
+*.env.local
+
+# Docker volumes persisted to local disk
+postgres_data/
+mysql_data/
+
+# Build artifacts
+dist/
+
+# Log files
+logs/
+*.log
+
+# Go workspace file
+go.work
+go.work.sum
